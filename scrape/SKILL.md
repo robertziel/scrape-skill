@@ -1,6 +1,13 @@
 ---
 name: scrape
 description: Fan out a scraping/extraction job across N parallel Hermes `delegate_task` children that run on the SAME local model as the lead but with lean, isolated context — each child gets only how-to-scrape + the target schema + its URLs, writes records to the run's raw/ folder, and returns a short status. The lead keeps its full context window and the aggregate state. Use when a research run has many URLs/entities to scrape and you want controlled parallelism; the max number of parallel agents is the skill's argument.
+version: 1.0.0
+author: Robert Zieliński
+license: MIT
+metadata:
+  hermes:
+    tags: [scrape, fan-out, delegate, parallel, research]
+    related_skills: []
 ---
 
 # Scrape fan-out (lean workers, same model, capped parallelism)
@@ -84,9 +91,9 @@ The scrape runs in **rounds**: each round takes the next batch of targets, fans 
 `max_agents` workers, writes their `raw/*.jsonl`, and prints a one-line progress tally (targets
 done, records, failures, blocked). It stops at the **first** of:
 
-1. **Targets exhausted** — nothing new left to scrape. In unlimited mode, if more targets can
-   still appear (a running discovery feed), say so and idle awaiting finalise or new URLs rather
-   than ending.
+1. **Exhausted** — no new (unseen) targets left **and** no productive pivot remains (see
+   "Continuous mode"). In unlimited mode, if more targets can still appear (a running discovery
+   feed) or a pivot is open, say so and idle awaiting finalise or new URLs rather than ending.
 2. **`limit` reached** — a `limit` was given and that many targets have been scraped.
 3. **You finalise** — you type **`finalise`** (or "stop scrape"). The lead stops dispatching new
    workers and lets in-flight children finish.
@@ -103,3 +110,26 @@ Done means: every scraped target written to a `raw/<label>.jsonl`, the lead hold
 per-round tallies and condensed statuses (never the records), and the records consolidated into
 a ledger run. If the lead's context grew with the scraped data, a child returned records in its
 final message instead of writing them to `raw/`.
+
+## Continuous mode: epochs, dedupe, replan
+
+Unlimited mode (no `limit`) runs in **epochs** — one epoch is one pass over the current target
+frontier (its rounds of fan-out). Between epochs the lead dedupes, concludes, and replans, all
+from disk so compaction can't lose state.
+
+1. **Dedupe across epochs (never re-loop the same data).** Keep a persistent **seen-set** of
+   canonical target keys (normalized URL / entity key) in `raw/seen.txt`. Before dispatching a
+   round, drop every target already in `seen` and every entity `find_entities` reports as known.
+   After a worker returns, append the keys it covered to `seen`. A key in `seen` is never
+   dispatched again.
+2. **Conclusions after each epoch** — the lead reads only this epoch's `raw/*.jsonl` + tallies
+   (never pull records back into context): yield per source/segment, score distribution, where
+   the best/most data came from, which sources were dry or blocked.
+3. **Replan from the conclusions** — build the next epoch's plan: double down on the
+   highest-yield sources/segments, drop the dry ones, and **pivot to an adjacent target** (new
+   query / segment / geography / entity type) when the frontier is exhausted or low-yield.
+   Persist plan + seen-set to disk (`raw/plan.md`, `raw/seen.txt`) before starting the epoch.
+4. **Exhaustion** (stop condition 1 above) now means: no new unseen targets **and** no
+   productive pivot left. `limit` and user `finalise` are unchanged.
+5. The lead's context stays **flat** across epochs — conclusions come from files and tallies,
+   never from holding all records in the window.
