@@ -7,7 +7,9 @@ model, it's that each worker starts from an **isolated, near-empty context** and
 handed only what it needs: the scrape recipe + the target schema + its URLs. The lead
 keeps its full window and the aggregate state.
 
-The number of parallel workers is the skill's single argument (default 3).
+Two optional arguments: `/scrape [max_agents] [limit]` — parallel workers (default 3) and a
+cap on how many targets to scrape. Omit `limit` for **continuous mode**: the scrape runs round
+after round until you type `finalise` (or the targets run dry).
 
 ## Why
 

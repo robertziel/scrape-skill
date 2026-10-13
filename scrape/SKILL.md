@@ -14,13 +14,18 @@ This skill is the fetch-and-extract stage. Validated findings still go through t
 (`research-run` skill / `CLAUDE.md`); this skill only produces the per-worker `raw/` files the
 lead reads back.
 
-## Argument: max parallel agents
+## Arguments
 
-The skill argument is one integer = **max parallel scraper agents** (the fan-out cap).
-- Default **3** if no argument is given.
-- Clamp to `delegation.max_concurrent_children` in `~/.hermes/config.yaml` (default 10). Never
+Two optional positional numbers: `/scrape [max_agents] [limit]`.
+
+- **max_agents** (first) — max workers running in parallel (the fan-out cap). Default **3**.
+  Clamp to `delegation.max_concurrent_children` in `~/.hermes/config.yaml` (default 10); never
   exceed it — cost and load on the single local vLLM LB (`:8010`) scale linearly with children.
-- `/scrape-fanout 6` → up to 6 children at once.
+- **limit** (second) — how many targets to scrape before stopping on its own. **Omit it for
+  unlimited**: the scrape runs continuously, round after round, and ends only when you type the
+  finalise signal (see "When the scrape ends") or the target list runs dry.
+- `/scrape 6` → 6 workers, unlimited (runs until you finalise). `/scrape 6 50` → 6 workers, stop
+  after 50 targets.
 
 ## Why children stay small (don't fight this, it's the default)
 
@@ -73,9 +78,28 @@ The skill argument is one integer = **max parallel scraper agents** (the fan-out
   if you genuinely need more than `max_concurrent_children` workers in flight — that is a
   throughput change, not required for this skill.
 
-## Done means
+## When the scrape ends
 
-Every target scraped (or reported `blocked`/`not_found`), one `raw/<label>.jsonl` per child, the
-lead holding only the condensed statuses, and the records ready for a ledger run. Lead context
-should not have grown with the scraped data — if it did, a child returned records in its final
-message instead of writing them to `raw/`.
+The scrape runs in **rounds**: each round takes the next batch of targets, fans out up to
+`max_agents` workers, writes their `raw/*.jsonl`, and prints a one-line progress tally (targets
+done, records, failures, blocked). It stops at the **first** of:
+
+1. **Targets exhausted** — nothing new left to scrape. In unlimited mode, if more targets can
+   still appear (a running discovery feed), say so and idle awaiting finalise or new URLs rather
+   than ending.
+2. **`limit` reached** — a `limit` was given and that many targets have been scraped.
+3. **You finalise** — you type **`finalise`** (or "stop scrape"). The lead stops dispatching new
+   workers and lets in-flight children finish.
+
+So **unlimited mode (no `limit`) keeps going until you finalise** — it will not end on its own
+while targets keep coming. Continuous/finalise mode needs an **interactive session**
+(desk/gateway): a one-shot `hermes -z` run has no one to type finalise, so pass a `limit` there.
+
+**Finalise** = stop dispatching, wait for in-flight workers, then consolidate every
+`raw/*.jsonl` and hand the records to the ledger the normal way (`research-run`: `open_run` →
+`add_findings`, re-checking each URL first). Report the totals and where they landed.
+
+Done means: every scraped target written to a `raw/<label>.jsonl`, the lead holding only the
+per-round tallies and condensed statuses (never the records), and the records consolidated into
+a ledger run. If the lead's context grew with the scraped data, a child returned records in its
+final message instead of writing them to `raw/`.
