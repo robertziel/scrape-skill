@@ -26,7 +26,7 @@ lead reads back.
 Two optional positional numbers: `/scrape [max_agents] [limit]`.
 
 - **max_agents** (first) — max workers running in parallel (the fan-out cap). Default **3**.
-  Clamp to `delegation.max_concurrent_children` in `~/.hermes/config.yaml` (default 10); never
+  Clamp to `delegation.max_concurrent_children` in `$HERMES_HOME/config.yaml` (default 10); never
   exceed it — cost and load on the single local vLLM LB (`:8010`) scale linearly with children.
 - **limit** (second) — how many targets to scrape before stopping on its own. **Omit it for
   unlimited**: the scrape runs continuously, round after round, and ends only when you type the
