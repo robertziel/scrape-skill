@@ -27,7 +27,7 @@ Two optional positional numbers: `/scrape [max_agents] [limit]`.
 
 - **max_agents** (first) — max workers running in parallel (the fan-out cap). Default **3**.
   Clamp to `delegation.max_concurrent_children` in `$HERMES_HOME/config.yaml` (default 10); never
-  exceed it — cost and load on the single local vLLM LB (`:8010`) scale linearly with children.
+  exceed it — cost and load on your model endpoint scale linearly with children.
 - **limit** (second) — how many targets to scrape before stopping on its own. **Omit it for
   unlimited**: the scrape runs continuously, round after round, and ends only when you type the
   finalise signal (see "When the scrape ends") or the target list runs dry.
@@ -42,7 +42,7 @@ Two optional positional numbers: `/scrape [max_agents] [limit]`.
   `context` — keep it to the scrape recipe + schema + URLs. Nothing else.
 - Children inherit the parent model unless `delegation.model`/`delegation.provider` is set in
   config. You want the same model here, so leave those unset.
-- The model's window (131072 on the local Qwen) is a ceiling, not a per-call cost. A short child
+- The model's context window is a ceiling, not a per-call cost. A short child
   prompt uses little KV cache and runs fast even though the ceiling is large.
 
 ## Run it
@@ -80,7 +80,7 @@ Two optional positional numbers: `/scrape [max_agents] [limit]`.
 ## Caps and knobs (local vLLM, same model)
 
 - `delegation.max_concurrent_children` (config, default 10) is the hard ceiling for `max_agents`.
-- One served model on `:8010` handles lead + workers; no second server is needed.
+- One served model handles lead + workers; no second server is needed.
 - Only stand up a second vLLM instance with a smaller `--max-model-len` (→ more `--max-num-seqs`)
   if you genuinely need more than `max_concurrent_children` workers in flight — that is a
   throughput change, not required for this skill.
