@@ -1,7 +1,7 @@
 ---
 name: scrape
 description: Fan out a scraping/extraction job across N parallel Hermes `delegate_task` children that run on the SAME local model as the lead but with lean, isolated context — each child gets only how-to-scrape + the target schema + its URLs, writes records to the run's raw/ folder, and returns a short status. The lead keeps its full context window and the aggregate state. Use when a research run has many URLs/entities to scrape and you want controlled parallelism; the max number of parallel agents is the skill's argument.
-version: 1.3.0
+version: 1.4.0
 author: Robert Zieliński
 license: MIT
 metadata:
@@ -63,6 +63,17 @@ One optional positional number: `/scrape [max_agents]`.
    - "Everything you need is in this brief. Do not open skills (`skill_view`), do not use
      `web_search`, crawl4ai, curl or WebFetch — fetch pages with the chromium `fetch(url, kind=…)`
      tool only." Pagination / dedupe / stop rule; `blocked` or 404 → report it, never invent absence;
+   - **compact fetch calls** (always `extract="fit"` — a compact view of the stored page; the
+     hashes still refer to the full page, so provenance is unchanged):
+     - ATS board / careers list: `fetch(url, kind="ats_board", extract="fit")` → one index line per
+       job (title · location · url); filter with `query="<subject terms>", max_chars=8000`.
+     - single posting: `fetch(url, kind="ats_posting", extract="fit")`; long ones add
+       `query="requirements stack salary location"`.
+     - company facts: `fetch(url, kind="company", extract="fit")`; long pages add
+       `query="headquarters office founded team stack"`.
+     - `query_match: 0` = no chunk matched the query, NOT "no jobs" / "no data" — re-read
+       without `query` before concluding anything. `truncated` → follow `more`
+       (`page_text(canon_url, offset, extract="fit")`) only if the missing part is needed;
    - the **budget**: "≤ 25 tool calls, then return the contract with what you have" (Hermes
      compacts a child at 40K tokens — `delegation.compression_threshold_tokens`);
    - the **target schema** (the project's `findings/schema.json` shape for the entities it scrapes);
