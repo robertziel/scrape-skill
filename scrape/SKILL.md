@@ -1,7 +1,7 @@
 ---
 name: scrape
 description: Fan out a scraping/extraction job across N parallel Hermes `delegate_task` children that run on the SAME local model as the lead but with lean, isolated context — each child gets only how-to-scrape + the target schema + its URLs, writes records to the run's raw/ folder, and returns a short status. The lead keeps its full context window and the aggregate state. Use when a research run has many URLs/entities to scrape and you want controlled parallelism; the max number of parallel agents is the skill's argument.
-version: 1.1.0
+version: 1.2.0
 author: Robert Zieliński
 license: MIT
 metadata:
@@ -23,16 +23,14 @@ lead reads back.
 
 ## Arguments
 
-Two optional positional numbers: `/scrape [max_agents] [limit]`.
+One optional positional number: `/scrape [max_agents]`.
 
 - **max_agents** (first) — max workers running in parallel (the fan-out cap). Default **3**.
   Clamp to `delegation.max_concurrent_children` in `$HERMES_HOME/config.yaml` (default 10); never
   exceed it — cost and load on your model endpoint scale linearly with children.
-- **limit** (second) — how many targets to scrape before stopping on its own. **Omit it for
-  unlimited**: the scrape runs continuously, worker after worker, and ends only when you type the
-  finalise signal (see "When the scrape ends") or the target list runs dry.
-- `/scrape 6` → 6 workers, unlimited (runs until you finalise). `/scrape 6 50` → 6 workers, stop
-  after 50 targets.
+- The scrape is always continuous: worker after worker, it ends only when the targets run dry or
+  you type the finalise signal (see "When the scrape ends").
+- `/scrape 6` → 6 workers, runs until exhaustion or you finalise.
 
 ## Why children stay small (don't fight this, it's the default)
 
@@ -137,16 +135,15 @@ The scrape runs as a **rolling pool** of up to `max_agents` workers; each return
 blocked). It stops at the **first** of:
 
 1. **Exhausted** — no new (unseen) targets left **and** no productive pivot remains (see
-   "Continuous mode"). In unlimited mode, if more targets can still appear (a running discovery
+   "Continuous mode"). If more targets can still appear (a running discovery
    feed) or a pivot is open, say so and idle awaiting finalise or new URLs rather than ending.
-2. **`limit` reached** — a `limit` was given and that many targets have been scraped.
-3. **You finalise** — you type **`finalise`** (or "stop scrape"). The lead stops dispatching new
+2. **You finalise** — you type **`finalise`** (or "stop scrape"). The lead stops dispatching new
    workers and steers every in-flight child with the FINALISE message (step 5); URLs they did
    not cover stay out of `seen` for a later run.
 
-So **unlimited mode (no `limit`) keeps going until you finalise** — it will not end on its own
-while targets keep coming. Continuous/finalise mode needs an **interactive session**
-(desk/gateway): a one-shot `hermes -z` run has no one to type finalise, so pass a `limit` there.
+So the scrape **keeps going until you finalise** — it will not end on its own while targets keep
+coming. Continuous mode needs an **interactive session** (desk/gateway); a one-shot `hermes -z`
+run ends only on exhaustion.
 
 **Finalise** = stop dispatching, wait for in-flight workers, then consolidate every
 `raw/*.jsonl` and hand the records to the ledger the normal way (`research-run`: `open_run` →
@@ -159,7 +156,7 @@ final message instead of writing them to `raw/`.
 
 ## Continuous mode: epochs, dedupe, replan
 
-Unlimited mode (no `limit`) runs in **epochs** — one epoch is one pass over the current target
+The scrape runs in **epochs** — one epoch is one pass over the current target
 frontier (its rolling pool of workers). Between epochs the lead dedupes, concludes, and replans, all
 from disk so compaction can't lose state.
 
@@ -185,6 +182,6 @@ from disk so compaction can't lose state.
      `raw/plan.md`.
    Persist plan + seen-set to disk (`raw/plan.md`, `raw/seen.txt`) before starting the epoch.
 4. **Exhaustion** (stop condition 1 above) now means: no new unseen targets **and** no
-   productive pivot left. `limit` and user `finalise` are unchanged.
+   productive pivot left. User `finalise` is unchanged.
 5. The lead's context stays **flat** across epochs — conclusions come from files and tallies,
    never from holding all records in the window.
