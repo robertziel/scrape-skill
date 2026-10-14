@@ -8,8 +8,8 @@ handed only what it needs: the scrape recipe + the target schema + its URLs. The
 keeps its full window and the aggregate state.
 
 Two optional arguments: `/scrape [max_agents] [limit]` — parallel workers (default 3) and a
-cap on how many targets to scrape. Omit `limit` for **continuous mode**: the scrape runs round
-after round until you type `finalise` (or the targets run dry).
+cap on how many targets to scrape. Omit `limit` for **continuous mode**: the scrape keeps
+dispatching workers until you type `finalise` (or the targets run dry).
 
 ## Why
 
@@ -48,12 +48,13 @@ skills:
 See [`scrape/SKILL.md`](scrape/SKILL.md). In short:
 
 1. Build the target list, drop already-known targets.
-2. Batch 2–3 targets per worker; dispatch `max_agents` at a time (clamped to the
-   delegation concurrency cap).
+2. Batch 2–3 targets per worker; keep `max_agents` in flight (clamped to the delegation
+   concurrency cap) as a rolling pool, one `delegate_task` call per worker. When only one worker
+   is left, finalise it and split its unfinished URLs across fresh workers.
 3. Each worker gets a lean `context` (recipe + schema + URLs + output path + return
    contract) — never the parent conversation.
 4. Workers write records to `raw/<label>.jsonl` and return only
-   `{path, n_records, n_failed, failures, blocked_hosts}`.
+   `{path, n_records, n_failed, failures, blocked_hosts, unfinished}`.
 5. The lead reads the `raw/` files in slices; records never ride back in a worker's
    final message.
 

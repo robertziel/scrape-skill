@@ -29,7 +29,7 @@ Two optional positional numbers: `/scrape [max_agents] [limit]`.
   Clamp to `delegation.max_concurrent_children` in `$HERMES_HOME/config.yaml` (default 10); never
   exceed it — cost and load on your model endpoint scale linearly with children.
 - **limit** (second) — how many targets to scrape before stopping on its own. **Omit it for
-  unlimited**: the scrape runs continuously, round after round, and ends only when you type the
+  unlimited**: the scrape runs continuously, worker after worker, and ends only when you type the
   finalise signal (see "When the scrape ends") or the target list runs dry.
 - `/scrape 6` → 6 workers, unlimited (runs until you finalise). `/scrape 6 50` → 6 workers, stop
   after 50 targets.
@@ -50,29 +50,46 @@ Two optional positional numbers: `/scrape [max_agents] [limit]`.
 1. **Build the target list** the lead already has: `[{id, url(s)}]`. Drop already-known entities
    first (`find_entities`) and anything `due_checks` will handle — scrape only what is new.
 2. **Batch 2–3 targets per child** (4+ tends to hit the 600 s stall watchdog). Number of children
-   = `ceil(targets / batch)`, dispatched `max_agents` at a time.
+   = `ceil(targets / batch)`, at most `max_agents` in flight (rolling pool, step 4).
 3. **Give every child the same lean `context`**, filled with its own URLs:
    - the scrape recipe: use the chromium `fetch(url, kind=…)` tool only (never curl/WebFetch);
      pagination / dedupe / stop rule; `blocked` or 404 → report it, never invent absence;
    - the **target schema** (the project's `findings/schema.json` shape for the entities it scrapes);
    - its 2–3 target URLs (or a path to a URL-list file);
-   - the **output path**: `<project>/findings/runs/<run>/raw/<label>.jsonl`;
+   - the **output path**: `<project>/findings/runs/<run>/raw/<label>.jsonl` — append each record
+     the moment it is extracted, with the `target` URL it came from (lets the lead see progress
+     and split leftovers);
    - the **return contract** (below). Do NOT paste prior results, other children's output, or the
      lead's conversation.
-4. **Dispatch** with `delegate_task` batch mode, `max_concurrent_children` = `max_agents`:
+4. **Dispatch one `delegate_task` call per worker** — never one batch call for all of them. A
+   batch is ONE async unit that joins on every child, so the slowest worker holds every other
+   result back. Separate calls return separately:
    ```
-   delegate_task(tasks=[
-     {goal: "Scrape live roles from these 3 boards into JSONL per the schema",
-      context: "<scrape recipe + schema + urls + output path + return contract>"},
-     ...
-   ])
+   delegate_task(tasks=[{goal: "Scrape live roles from these 3 boards into JSONL per the schema",
+                         context: "<scrape recipe + schema + urls + output path + return contract>"}])
    ```
-5. **Return contract** — each child's final message is ONLY:
+   **Rolling pool:** keep `max_agents` workers in flight; each time one returns, dispatch the next
+   batch from the frontier at once. No round barrier.
+5. **Finalise the straggler, split its leftovers — in the same turn, no waiting.** When the
+   frontier is empty and every other in-flight worker has returned:
+   - `delegate_task(action="steer", subagent_id=<id>, message="FINALISE: finish the URL you are
+     on, append it to <path>, start no new URL, return the status contract now.")`
+   - Leftovers = the URLs you assigned it − the `target` URLs already in its `raw/` file (workers
+     append each record as they go, step 3). Computed from disk, not from its self-report.
+   - Split the leftovers across fresh workers at once (up to `max_agents − 1` — the straggler still
+     counts against the cap — 1–2 URLs each) — they
+     start from an empty context and finish faster than the straggler would. The URL it was on
+     may be scraped twice; the ledger dedupes on keys.
+   - If `delegate_task(action="list")` still shows it running when the fresh workers return,
+     `delegate_task(action="stop", subagent_id=<id>)` — its partial result still comes back.
+   - Leftover URLs go into `seen` only when a worker actually covered them.
+6. **Return contract** — each child's final message is ONLY:
    `{"path": "...raw/<label>.jsonl", "n_records": N, "n_failed": M,
-     "failures": [{"url","reason"}] (cap ~10), "blocked_hosts": [...]}`.
+     "failures": [{"url","reason"}] (cap ~10), "blocked_hosts": [...], "unfinished": [url, ...]}`
+   (`unfinished` is informational; the lead trusts the `raw/` file).
    Child records (page bodies, extracted rows) go to the `raw/` file, **never** into the final
    message — that is what would flood the lead's context.
-6. **Lead collects**: read each `raw/*.jsonl` in slices as needed, not all at once. Then hand the
+7. **Lead collects**: read each `raw/*.jsonl` in slices as needed, not all at once. Then hand the
    verified records to the ledger the normal way (`research-run`: `open_run` → `add_findings`).
    Re-check every URL before it enters findings (subagents can hallucinate URLs — `fetch` is a
    cache hit if the child really fetched it).
@@ -80,6 +97,8 @@ Two optional positional numbers: `/scrape [max_agents] [limit]`.
 ## Caps and knobs (local vLLM, same model)
 
 - `delegation.max_concurrent_children` (config, default 10) is the hard ceiling for `max_agents`.
+  It counts children in flight across ALL `delegate_task` calls; a dispatch at capacity is
+  rejected and runs synchronously, blocking the lead — never put more than `max_agents` in flight.
 - One served model handles lead + workers; no second server is needed.
 - Only stand up a second vLLM instance with a smaller `--max-model-len` (→ more `--max-num-seqs`)
   if you genuinely need more than `max_concurrent_children` workers in flight — that is a
@@ -87,16 +106,17 @@ Two optional positional numbers: `/scrape [max_agents] [limit]`.
 
 ## When the scrape ends
 
-The scrape runs in **rounds**: each round takes the next batch of targets, fans out up to
-`max_agents` workers, writes their `raw/*.jsonl`, and prints a one-line progress tally (targets
-done, records, failures, blocked). It stops at the **first** of:
+The scrape runs as a **rolling pool** of up to `max_agents` workers; each returned worker's
+`raw/*.jsonl` is counted into a one-line progress tally (targets done, records, failures,
+blocked). It stops at the **first** of:
 
 1. **Exhausted** — no new (unseen) targets left **and** no productive pivot remains (see
    "Continuous mode"). In unlimited mode, if more targets can still appear (a running discovery
    feed) or a pivot is open, say so and idle awaiting finalise or new URLs rather than ending.
 2. **`limit` reached** — a `limit` was given and that many targets have been scraped.
 3. **You finalise** — you type **`finalise`** (or "stop scrape"). The lead stops dispatching new
-   workers and lets in-flight children finish.
+   workers and steers every in-flight child with the FINALISE message (step 5); URLs they did
+   not cover stay out of `seen` for a later run.
 
 So **unlimited mode (no `limit`) keeps going until you finalise** — it will not end on its own
 while targets keep coming. Continuous/finalise mode needs an **interactive session**
@@ -107,19 +127,19 @@ while targets keep coming. Continuous/finalise mode needs an **interactive sessi
 `add_findings`, re-checking each URL first). Report the totals and where they landed.
 
 Done means: every scraped target written to a `raw/<label>.jsonl`, the lead holding only the
-per-round tallies and condensed statuses (never the records), and the records consolidated into
+running tallies and condensed statuses (never the records), and the records consolidated into
 a ledger run. If the lead's context grew with the scraped data, a child returned records in its
 final message instead of writing them to `raw/`.
 
 ## Continuous mode: epochs, dedupe, replan
 
 Unlimited mode (no `limit`) runs in **epochs** — one epoch is one pass over the current target
-frontier (its rounds of fan-out). Between epochs the lead dedupes, concludes, and replans, all
+frontier (its rolling pool of workers). Between epochs the lead dedupes, concludes, and replans, all
 from disk so compaction can't lose state.
 
 1. **Dedupe across epochs (never re-loop the same data).** Keep a persistent **seen-set** of
    canonical target keys (normalized URL / entity key) in `raw/seen.txt`. Before dispatching a
-   round, drop every target already in `seen` and every entity `find_entities` reports as known.
+   worker, drop every target already in `seen` and every entity `find_entities` reports as known.
    After a worker returns, append the keys it covered to `seen`. A key in `seen` is never
    dispatched again.
 2. **Conclusions after each epoch** — the lead reads only this epoch's `raw/*.jsonl` + tallies
