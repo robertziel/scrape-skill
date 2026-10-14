@@ -1,7 +1,7 @@
 ---
 name: scrape
 description: Fan out a scraping/extraction job across N parallel Hermes `delegate_task` children that run on the SAME local model as the lead but with lean, isolated context — each child gets only how-to-scrape + the target schema + its URLs, writes records to the run's raw/ folder, and returns a short status. The lead keeps its full context window and the aggregate state. Use when a research run has many URLs/entities to scrape and you want controlled parallelism; the max number of parallel agents is the skill's argument.
-version: 1.2.1
+version: 1.3.0
 author: Robert Zieliński
 license: MIT
 metadata:
@@ -48,8 +48,14 @@ One optional positional number: `/scrape [max_agents]`.
 
 ## Run it
 
-1. **Build the target list** the lead already has: `[{id, url(s)}]`. Drop already-known entities
-   first (`find_entities`) and anything `due_checks` will handle — scrape only what is new.
+1. **Dispatch first, analyse later.** The first workers go out within your first ~10 tool calls.
+   The lead does NOT discover or fetch itself: with no ready target list, the first subjects are
+   *discovery* subjects (a job-board search, a directory, a sponsor / community page), handed to
+   workers like any other; their found links fill the cache and the next epoch scrapes those.
+   Plan from `raw/plan.md` on disk — never re-read the protocol or this skill to re-plan, and
+   never re-plan after a compaction from scratch.
+   With a target list: `[{id, url(s)}]`. Drop already-known entities first (`find_entities`) and
+   anything `due_checks` will handle — scrape only what is new.
 2. **One subject per child.** A subject = one entity (a company, a board, an event series) with
    its URLs. The child researches it, writes it to disk and ends; the next subject starts from a
    fresh context. At most `max_agents` in flight (rolling pool, step 4).
