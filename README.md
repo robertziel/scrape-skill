@@ -48,14 +48,19 @@ skills:
 See [`scrape/SKILL.md`](scrape/SKILL.md). In short:
 
 1. Build the target list, drop already-known targets.
-2. Batch 2–3 targets per worker; keep `max_agents` in flight (clamped to the delegation
+2. One subject per worker; keep `max_agents` in flight (clamped to the delegation
    concurrency cap) as a rolling pool, one `delegate_task` call per worker. When only one worker
    is left, finalise it and split its unfinished URLs across fresh workers.
 3. Each worker gets a lean `context` (recipe + schema + URLs + output path + return
    contract) — never the parent conversation.
 4. Workers write records to `raw/<label>.jsonl` and return only
-   `{path, n_records, n_failed, failures, blocked_hosts, unfinished}`.
-5. The lead reads the `raw/` files in slices; records never ride back in a worker's
+   `{path, n_records, n_failed, failures, blocked_hosts, unfinished, n_links}`.
+5. A worker's subject memory is two files it owns: `raw/<label>.jsonl` (records) and
+   `raw/links/<label>.jsonl` (links it met that belong to another subject — cached, never followed).
+6. At each replan the lead runs `scrape/scripts/links_queue.py tally <raw dir>` (stdlib Python):
+   cached links grouped by host, ranked by how many subjects cached them, minus `seen.txt` — and
+   picks the next subjects from it.
+7. The lead reads the `raw/` files in slices; records never ride back in a worker's
    final message.
 
 The SKILL.md is written against a Hermes + chromium-`fetch` + findings-ledger setup
