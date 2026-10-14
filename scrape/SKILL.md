@@ -1,7 +1,7 @@
 ---
 name: scrape
 description: Fan out a scraping/extraction job across N parallel Hermes `delegate_task` children that run on the SAME local model as the lead but with lean, isolated context — each child gets only how-to-scrape + the target schema + its URLs, writes records to the run's raw/ folder, and returns a short status. The lead keeps its full context window and the aggregate state. Use when a research run has many URLs/entities to scrape and you want controlled parallelism; the max number of parallel agents is the skill's argument.
-version: 1.2.0
+version: 1.2.1
 author: Robert Zieliński
 license: MIT
 metadata:
@@ -31,6 +31,9 @@ One optional positional number: `/scrape [max_agents]`.
 - The scrape is always continuous: worker after worker, it ends only when the targets run dry or
   you type the finalise signal (see "When the scrape ends").
 - `/scrape 6` → 6 workers, runs until exhaustion or you finalise.
+- **There is no target count.** A number in the task text ("find 10 companies", "run 2 epochs")
+  is NOT a stop condition and NOT a cap — read it as a starting hint at most. Never stop, idle or
+  ask "should I continue?" because some count was reached; only exhaustion or `finalise` end it.
 
 ## Why children stay small (don't fight this, it's the default)
 
@@ -176,7 +179,8 @@ from disk so compaction can't lose state.
    - run `python3 <skill dir>/scripts/links_queue.py tally <raw dir>` — ≤ 30 hosts ranked by
      votes (distinct subjects that cached them), never `raw/links/*` itself;
    - `find_entities` on the candidates; drop known ones;
-   - pick ≤ `max_agents × 2` new subjects, ≤ 2 per host (the fetch layer serialises one host),
+   - pick ≤ `max_agents × 2` new subjects for THIS epoch (a batch size, not a total — the next
+     epoch picks again), ≤ 2 per host (the fetch layer serialises one host),
      each one judged against the run's question and scope;
    - write `## Epoch N dispatch` (subject · host · votes · why) and `## Rejected` (host · why) to
      `raw/plan.md`.
