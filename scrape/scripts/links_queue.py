@@ -2,10 +2,11 @@
 """Found-links cache → ranked next-subject candidates for the lead's replan.
 
   links_queue.py tally <raw_dir> [--top 30] [--per-host 3]
-      Reads <raw_dir>/links/*.jsonl (one file per worker, lines {url, found_on, subject, anchor?,
-      hint?, ts?}), drops URLs whose canonical key is in <raw_dir>/seen.txt, groups by host and
-      prints one JSON line per host, best first: {host, votes (distinct subjects), n, urls, anchors,
-      hints}. A malformed line exits 1 naming file:line — nothing is skipped.
+      Reads <raw_dir>/links/<subject>[.<n>].jsonl (one file per worker; the name is the subject,
+      `.<n>` = a split worker on the same subject; lines {url, found_on, anchor?, hint?, ts?}),
+      drops URLs whose canonical key is in <raw_dir>/seen.txt, groups by host and prints one JSON
+      line per host, best first: {host, votes (distinct subjects), n, urls, anchors, hints}.
+      A malformed line exits 1 naming file:line — nothing is skipped.
   links_queue.py canon <url> [<url> ...]
       Prints the canonical key of each URL — the form seen.txt holds.
 """
@@ -14,7 +15,7 @@ import sys
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-REQUIRED = ("url", "found_on", "subject")
+REQUIRED = ("url", "found_on")
 
 
 def canon(url):
@@ -36,6 +37,7 @@ def tally(raw_dir, top, per_host):
     seen = {line.strip() for line in seen_file.read_text().splitlines() if line.strip()} if seen_file.exists() else set()
     hosts = {}
     for f in sorted((raw / "links").glob("*.jsonl")):
+        subject = f.name.split(".")[0]
         for i, line in enumerate(f.read_text().splitlines(), 1):
             if not line.strip():
                 continue
@@ -50,7 +52,7 @@ def tally(raw_dir, top, per_host):
             if key in seen:
                 continue
             h = hosts.setdefault(host_of(key), {"subjects": set(), "urls": {}, "anchors": [], "hints": []})
-            h["subjects"].add(rec["subject"])
+            h["subjects"].add(subject)
             h["urls"][key] = None
             for field, bucket in (("anchor", "anchors"), ("hint", "hints")):
                 v = rec.get(field)

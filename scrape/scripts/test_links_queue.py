@@ -33,19 +33,20 @@ class LinksQueueTest(unittest.TestCase):
             lq.canon("mailto:hi@acme.com")
 
     def test_votes_rank_and_seen(self):
-        self.write("w1.jsonl", {"url": "https://boards.example/acme", "found_on": "https://a.com", "subject": "A"},
-                   {"url": "https://lone.example/x", "found_on": "https://a.com", "subject": "A"})
-        self.write("w2.jsonl", {"url": "https://boards.example/beta", "found_on": "https://b.com", "subject": "B",
-                                "anchor": "Careers"},
-                   {"url": "https://seen.example/", "found_on": "https://b.com", "subject": "B"})
+        self.write("acme.jsonl", {"url": "https://boards.example/acme", "found_on": "https://a.com"},
+                   {"url": "https://lone.example/x", "found_on": "https://a.com"})
+        self.write("acme.2.jsonl", {"url": "https://boards.example/acme2", "found_on": "https://a.com"})
+        self.write("beta.jsonl", {"url": "https://boards.example/beta", "found_on": "https://b.com",
+                                  "anchor": "Careers"},
+                   {"url": "https://seen.example/", "found_on": "https://b.com"})
         (self.raw / "seen.txt").write_text(lq.canon("https://seen.example") + "\n")
         out = run_tally(self.raw)
         self.assertEqual([o["host"] for o in out], ["boards.example", "lone.example"])
-        self.assertEqual((out[0]["votes"], out[0]["n"], out[0]["anchors"]), (2, 2, ["Careers"]))
+        self.assertEqual((out[0]["votes"], out[0]["n"], out[0]["anchors"]), (2, 3, ["Careers"]))
 
     def test_malformed_line_fails_loudly(self):
-        self.write("w1.jsonl", {"url": "https://ok.example", "found_on": "https://a.com", "subject": "A"},
-                   {"url": "https://no-subject.example", "found_on": "https://a.com"})
+        self.write("w1.jsonl", {"url": "https://ok.example", "found_on": "https://a.com"},
+                   {"url": "https://no-found-on.example"})
         with self.assertRaises(SystemExit) as e:
             run_tally(self.raw)
         self.assertIn("w1.jsonl:2", str(e.exception.code))

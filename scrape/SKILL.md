@@ -59,7 +59,7 @@ Two optional positional numbers: `/scrape [max_agents] [limit]`.
    - the **budget**: "≤ 25 tool calls, then return the contract with what you have" (Hermes
      compacts a child at 40K tokens — `delegation.compression_threshold_tokens`);
    - the **target schema** (the project's `findings/schema.json` shape for the entities it scrapes);
-   - its subject and target URLs; `<label>` = the subject's slug;
+   - its subject and target URLs; `<label>` = the subject's slug (no dots — `.<n>` marks a split worker);
    - the **subject memory** — two files the child owns, re-read if the subject is resumed:
      - records: `<project>/findings/runs/<run>/raw/<label>.jsonl` — append each record the moment
        it is extracted, with the `target` URL it came from (lets the lead see progress and split
@@ -85,7 +85,7 @@ Two optional positional numbers: `/scrape [max_agents] [limit]`.
    - Split the leftovers across fresh workers at once (up to `max_agents − 1` — the straggler still
      counts against the cap — 1–2 URLs each) — they start from an empty context and finish faster
      than the straggler would. They resume the same subject: same records and links paths with a
-     `-<n>` suffix on `<label>`. The URL it was on may be scraped twice; the ledger dedupes on keys.
+     `.<n>` suffix on `<label>` (`acme.2.jsonl` — still one subject for the tally). The URL it was on may be scraped twice; the ledger dedupes on keys.
    - If `delegate_task(action="list")` still shows it running when the fresh workers return,
      `delegate_task(action="stop", subagent_id=<id>)` — its partial result still comes back.
    - Leftover URLs go into `seen` only when a worker actually covered them.
@@ -109,8 +109,8 @@ A child stays on its subject. Links it meets fall in two groups — **the child 
   within the budget.
 - **Not related but worth researching** (another company, a board listing many employers, an
   ecosystem/community page) → append one line to `raw/links/<label>.jsonl` and **never follow
-  it**: `{"url", "found_on", "subject", "anchor", "hint", "ts"}` (`found_on` = the fetched page it
-  was on, `hint` = one line on why it may matter, `subject` = the child's own subject). Only URLs
+  it**: `{"url", "found_on", "anchor", "hint", "ts"}` (`found_on` = the fetched page it was on,
+  `hint` = one line on why it may matter; the file name already says which subject). Only URLs
   that appear on a fetched page — never a guessed one. Cap 30 lines per subject.
 
 The lead turns the cache into next subjects at replan (Continuous mode, step 3); a cached URL
